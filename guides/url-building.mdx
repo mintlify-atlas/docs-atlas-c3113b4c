@@ -1,0 +1,134 @@
+---
+title: "URL building"
+description: "Generate URLs for named routes to avoid hardcoded strings in your application."
+---
+
+Hardcoding URL strings throughout a codebase makes routes difficult to change. gorilla/mux lets you name routes and generate their URLs programmatically, so a single change to the route definition propagates everywhere.
+
+## Naming a route
+
+Call `Name` on any route to register it in the router's named route map:
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/articles/{category}/{id:[0-9]+}", ArticleHandler).
+    Name("article")
+```
+
+A route's name must be unique. Calling `Name` twice on the same route is an error.
+
+## Building a full URL
+
+Retrieve the route by name with `r.Get`, then call `URL` with alternating key/value pairs for each route variable:
+
+```go
+url, err := r.Get("article").URL("category", "technology", "id", "42")
+// url.Path == "/articles/technology/42"
+```
+
+`URL` returns a `*url.URL`. All variables defined in the route are required — passing an unknown variable or a value that doesn't match the variable's pattern returns an error.
+
+## Building host and path separately
+
+When you only need part of the URL, use `URLHost` or `URLPath` instead of `URL`:
+
+```go
+// "http://news.example.com/"
+host, err := r.Get("article").URLHost("subdomain", "news")
+
+// "/articles/technology/42"
+path, err := r.Get("article").URLPath("category", "technology", "id", "42")
+```
+
+`URLHost` requires the route to define a host matcher. `URLPath` requires a path matcher.
+
+## Host, path, and query variables combined
+
+A single route can match on host, path, and query simultaneously. Pass all variables together to `URL`:
+
+```go
+r := mux.NewRouter()
+r.Host("{subdomain}.example.com").
+    Path("/articles/{category}/{id:[0-9]+}").
+    Queries("filter", "{filter}").
+    HandlerFunc(ArticleHandler).
+    Name("article")
+
+// url.String() == "http://news.example.com/articles/technology/42?filter=gorilla"
+url, err := r.Get("article").URL(
+    "subdomain", "news",
+    "category", "technology",
+    "id", "42",
+    "filter", "gorilla",
+)
+```
+
+## Subrouters and URL building
+
+When host and path are defined on separate routers (parent and subrouter), `URL` still assembles the full URL correctly:
+
+```go
+r := mux.NewRouter()
+s := r.Host("{subdomain}.example.com").Subrouter()
+s.Path("/articles/{category}/{id:[0-9]+}").
+    HandlerFunc(ArticleHandler).
+    Name("article")
+
+// "http://news.example.com/articles/technology/42"
+url, err := r.Get("article").URL(
+    "subdomain", "news",
+    "category", "technology",
+    "id", "42",
+)
+```
+
+## Discovering required variables
+
+When you don't know which variables a route requires, call `GetVarNames`:
+
+```go
+r := mux.NewRouter()
+r.Host("{domain}").
+    Path("/{group}/{item_id}").
+    Queries("some_data1", "{some_data1}").
+    Queries("some_data2", "{some_data2}").
+    Name("article")
+
+// Prints [domain group item_id some_data1 some_data2] <nil>
+fmt.Println(r.Get("article").GetVarNames())
+```
+
+Use this to validate that all required variables are present before calling `URL`.
+
+## Build-only routes
+
+A build-only route participates in URL generation but never matches incoming requests. This is useful when you want a canonical URL for a resource that is handled elsewhere:
+
+```go
+r.HandleFunc("/articles/{id}", ArticleHandler).
+    Name("article").
+    BuildOnly()
+```
+
+Calling `BuildOnly` on a route sets an internal flag that causes `Match` to always return false.
+
+## Transforming variables before building
+
+`BuildVarsFunc` lets you modify or supply route variables at URL-build time. This is useful for applying defaults or transforming values:
+
+```go
+r.HandleFunc("/articles/{category}/{id}", ArticleHandler).
+    Name("article").
+    BuildVarsFunc(func(vars map[string]string) map[string]string {
+        if vars["category"] == "" {
+            vars["category"] = "general"
+        }
+        return vars
+    })
+```
+
+When you call `URL`, the variables you pass are first run through `BuildVarsFunc`, then used to fill the route template.
+
+<Note>
+  The scheme of the generated URL is determined by the first argument passed to `Schemes`. If no scheme is specified, `URL` defaults to `http` when a host is present, or omits the scheme when only a path is returned.
+</Note>

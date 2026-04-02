@@ -1,0 +1,74 @@
+---
+title: "Introduction"
+description: "gorilla/mux is a powerful HTTP router and URL matcher for Go web servers."
+---
+
+`gorilla/mux` implements an HTTP request router and dispatcher for matching incoming requests to their respective handlers. The name *mux* stands for "HTTP request multiplexer."
+
+The standard library's `http.ServeMux` only matches URL paths. `gorilla/mux` goes further: you can match on HTTP method, host, headers, query parameters, URL schemes, and custom conditions — all in one router that implements `http.Handler`, so it drops in anywhere `net/http` is used.
+
+## Key features
+
+- **Named URL variables** — capture path segments like `{id}` or `{id:[0-9]+}` and retrieve them with `mux.Vars(r)`
+- **Multi-condition matching** — combine path, method, host, scheme, headers, and query parameters on a single route
+- **Subrouters** — group routes that share common conditions (host prefix, path prefix, etc.) to avoid repetition and optimize matching
+- **Reverse URL building** — name a route with `.Name()`, then generate its URL with `r.Get("name").URL(...)` 
+- **Middleware** — attach request middleware to a router with `r.Use()` using the standard `func(http.Handler) http.Handler` signature
+- **CORS support** — `mux.CORSMethodMiddleware` automatically sets the `Access-Control-Allow-Methods` header for routes that handle OPTIONS
+- **Walk function** — `r.Walk()` visits every registered route, useful for generating API documentation or registering routes in external systems
+- **`net/http` compatible** — `mux.Router` implements `http.Handler`, so you can pass it directly to `http.ListenAndServe` or any middleware that expects an `http.Handler`
+
+## Installation
+
+```bash
+go get -u github.com/gorilla/mux
+```
+
+Then import it in your Go files:
+
+```go
+import "github.com/gorilla/mux"
+```
+
+## Hello world
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "net/http"
+
+    "github.com/gorilla/mux"
+)
+
+func main() {
+    r := mux.NewRouter()
+
+    r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintln(w, "Hello, world!")
+    })
+
+    log.Fatal(http.ListenAndServe(":8080", r))
+}
+```
+
+`mux.NewRouter()` returns a `*Router` that matches incoming requests against registered routes and dispatches to the right handler. Because `*Router` implements `http.Handler`, you pass it directly to `http.ListenAndServe`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build a working server with multiple routes and middleware in under five minutes.
+  </Card>
+  <Card title="Routing" icon="route" href="/concepts/routing">
+    Learn how to match requests by path, method, host, headers, and more.
+  </Card>
+  <Card title="Middleware" icon="layer-group" href="/concepts/middleware">
+    Add logging, authentication, and other cross-cutting concerns with middleware.
+  </Card>
+  <Card title="Router API" icon="code" href="/api/router">
+    Full reference for `mux.Router`, `mux.Route`, and all matcher methods.
+  </Card>
+</CardGroup>

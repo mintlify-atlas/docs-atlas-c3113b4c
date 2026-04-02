@@ -1,0 +1,72 @@
+---
+title: "Serving static files"
+description: "Serve static assets from a directory using PathPrefix and http.FileServer."
+---
+
+Serving static files with gorilla/mux combines three standard library pieces: `PathPrefix`, `http.StripPrefix`, and `http.FileServer`.
+
+## How it works
+
+`PathPrefix("/static/")` matches any request whose path starts with `/static/`. Because it is a prefix match, it acts as a wildcard — `/static/css/main.css`, `/static/images/logo.png`, and `/static/js/app.js` all match.
+
+`http.StripPrefix` removes the `/static/` prefix before handing the request to `http.FileServer`, so the file server looks for `css/main.css` relative to the directory root rather than `static/css/main.css`.
+
+`http.FileServer(http.Dir(dir))` reads files from `dir` on disk and writes them to the response.
+
+## Complete example
+
+```go
+package main
+
+import (
+    "flag"
+    "log"
+    "net/http"
+    "time"
+
+    "github.com/gorilla/mux"
+)
+
+func main() {
+    var dir string
+
+    flag.StringVar(&dir, "dir", ".", "the directory to serve files from. Defaults to the current dir")
+    flag.Parse()
+    r := mux.NewRouter()
+
+    // This will serve files under http://localhost:8000/static/<filename>
+    r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir(dir))))
+
+    srv := &http.Server{
+        Handler:      r,
+        Addr:         "127.0.0.1:8000",
+        // Good practice: enforce timeouts for servers you create!
+        WriteTimeout: 15 * time.Second,
+        ReadTimeout:  15 * time.Second,
+    }
+
+    log.Fatal(srv.ListenAndServe())
+}
+```
+
+Run with a custom directory:
+
+```bash
+go run main.go --dir ./public
+```
+
+Files in `./public` are then available at `http://localhost:8000/static/<filename>`.
+
+## Path cleaning
+
+By default, gorilla/mux calls `path.Clean` on every incoming path before matching. Double slashes and `.`/`..` segments are resolved and the router redirects to the cleaned path with a 301. This behavior is generally desirable for file serving.
+
+If your static files are served from a path that intentionally contains double slashes (uncommon), use `r.SkipClean(true)` to disable the cleaning redirect.
+
+<Note>
+  `PathPrefix` does not treat slashes specially. The prefix `/static` (without trailing slash) would also match `/staticfiles`. Always include the trailing slash — `/static/` — when you want to scope to a single path segment.
+</Note>
+
+<Tip>
+  Set explicit `ReadTimeout` and `WriteTimeout` values on your `http.Server`. Without them, a slow client can hold a connection open indefinitely, which can exhaust file descriptors under load.
+</Tip>

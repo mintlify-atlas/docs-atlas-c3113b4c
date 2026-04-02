@@ -1,0 +1,412 @@
+---
+title: "Route"
+description: "The Route type configures how a single route matches requests and builds URLs."
+---
+
+A `Route` is returned by every route registration method on `Router`. You can chain multiple matcher methods on a route to compose complex matching conditions.
+
+```go
+r := mux.NewRouter()
+route := r.HandleFunc("/articles/{id:[0-9]+}", ArticleHandler).
+    Methods("GET").
+    Schemes("https").
+    Name("article")
+```
+
+---
+
+## Inspection
+
+### SkipClean
+
+```go
+func (r *Route) SkipClean() bool
+```
+
+Reports whether path cleaning is disabled for this route (as set by `Router.SkipClean`). Read-only — to change the setting, call `Router.SkipClean` before registering the route.
+
+### Match
+
+```go
+func (r *Route) Match(req *http.Request, match *RouteMatch) bool
+```
+
+Attempts to match the given request against this route. Populates `match` with the handler, vars, and any match error. Returns `true` if all matchers pass, `false` otherwise.
+
+You typically do not call this directly — `Router.ServeHTTP` calls it internally. It can be useful for testing custom matchers or in custom dispatcher logic.
+
+---
+
+## Matchers
+
+Methods that add matching conditions to the route. All conditions must match for the route to be selected.
+
+### Path
+
+```go
+func (r *Route) Path(tpl string) *Route
+```
+
+Adds a matcher for the URL path. The template must start with `/`. Variables are enclosed in `{}`:
+
+- `{name}` — matches anything until the next slash
+- `{name:pattern}` — matches the given regexp pattern (use non-capturing groups `(?:...)`)
+
+```go
+r.Path("/products/{key}")
+r.Path("/articles/{category}/{id:[0-9]+}")
+r.Path("/sort/{order:(?:asc|desc)}")
+```
+
+### PathPrefix
+
+```go
+func (r *Route) PathPrefix(tpl string) *Route
+```
+
+Adds a matcher for a URL path prefix. Matches any request whose path starts with `tpl`. Note that `StrictSlash` has no effect on routes using `PathPrefix`.
+
+```go
+r.PathPrefix("/api/v1/")
+```
+
+### Host
+
+```go
+func (r *Route) Host(tpl string) *Route
+```
+
+Adds a matcher for the URL host. Supports variables:
+
+```go
+r.Host("www.example.com")
+r.Host("{subdomain:[a-z]+}.example.com")
+```
+
+### Methods
+
+```go
+func (r *Route) Methods(methods ...string) *Route
+```
+
+Adds a matcher for HTTP methods. Method names are normalized to uppercase.
+
+```go
+r.Methods("GET", "POST")
+r.Methods(http.MethodGet, http.MethodPut, http.MethodOptions)
+```
+
+### Schemes
+
+```go
+func (r *Route) Schemes(schemes ...string) *Route
+```
+
+Adds a matcher for URL schemes (`"http"`, `"https"`). The first scheme is used when building URLs.
+
+```go
+r.Schemes("https")
+```
+
+### Headers
+
+```go
+func (r *Route) Headers(pairs ...string) *Route
+```
+
+Adds a matcher for request header values. Accepts key/value pairs. If the value is an empty string, it matches any value when the key is present.
+
+```go
+r.Headers("X-Requested-With", "XMLHttpRequest")
+r.Headers("Content-Type", "application/json", "X-Custom-Header", "")
+```
+
+### HeadersRegexp
+
+```go
+func (r *Route) HeadersRegexp(pairs ...string) *Route
+```
+
+Like `Headers`, but values are regular expressions. Use `^` and `$` to match exact values.
+
+```go
+r.HeadersRegexp("Content-Type", "application/(text|json)")
+```
+
+### Queries
+
+```go
+func (r *Route) Queries(pairs ...string) *Route
+```
+
+Adds a matcher for URL query values. Accepts key/value pairs. Values support the same variable syntax as paths.
+
+```go
+r.Queries("page", "{page:[0-9]+}", "sort", "desc")
+r.Queries("token", "")  // matches any value for "token"
+```
+
+### MatcherFunc
+
+```go
+func (r *Route) MatcherFunc(f MatcherFunc) *Route
+```
+
+Adds a custom matcher function. The function receives the request and the current `RouteMatch`.
+
+```go
+r.MatcherFunc(func(req *http.Request, rm *mux.RouteMatch) bool {
+    return req.ProtoMajor == 2
+})
+```
+
+---
+
+## Handler
+
+### Handler
+
+```go
+func (r *Route) Handler(handler http.Handler) *Route
+```
+
+Sets the handler for the route.
+
+### HandlerFunc
+
+```go
+func (r *Route) HandlerFunc(f func(http.ResponseWriter, *http.Request)) *Route
+```
+
+Sets a handler function for the route. Equivalent to `Handler(http.HandlerFunc(f))`.
+
+### GetHandler
+
+```go
+func (r *Route) GetHandler() http.Handler
+```
+
+Returns the handler assigned to the route, if any.
+
+### GetHandlerWithMiddlewares
+
+```go
+func (r *Route) GetHandlerWithMiddlewares() http.Handler
+```
+
+Returns the route handler wrapped with any route-level middleware applied in order. If no middleware is assigned, returns the handler directly. Returns `nil` if no handler has been set.
+
+This is useful when you need to invoke a route's handler+middleware chain manually (for example, during testing or in a custom dispatcher).
+
+---
+
+## Naming and URL building
+
+### Name
+
+```go
+func (r *Route) Name(name string) *Route
+```
+
+Sets the name for the route, used for URL building with `Router.Get`. Calling `Name` more than once on the same route is an error.
+
+```go
+r.HandleFunc("/articles/{category}/{id:[0-9]+}", ArticleHandler).Name("article")
+```
+
+### GetName
+
+```go
+func (r *Route) GetName() string
+```
+
+Returns the route's name.
+
+### URL
+
+```go
+func (r *Route) URL(pairs ...string) (*url.URL, error)
+```
+
+Builds a full URL for the route from key/value pairs. All variables defined in the route (path, host, query) must be supplied and must match their patterns.
+
+```go
+url, err := r.Get("article").URL("category", "tech", "id", "42")
+// url.Path == "/articles/tech/42"
+```
+
+### URLPath
+
+```go
+func (r *Route) URLPath(pairs ...string) (*url.URL, error)
+```
+
+Builds only the path portion of the URL.
+
+```go
+path, err := r.Get("article").URLPath("category", "tech", "id", "42")
+// path.Path == "/articles/tech/42"
+```
+
+### URLHost
+
+```go
+func (r *Route) URLHost(pairs ...string) (*url.URL, error)
+```
+
+Builds only the host portion of the URL. The route must have a host matcher.
+
+```go
+host, err := r.Get("article").URLHost("subdomain", "news")
+// host.Host == "news.example.com"
+```
+
+### GetVarNames
+
+```go
+func (r *Route) GetVarNames() ([]string, error)
+```
+
+Returns the names of all variables defined across host, path, and query matchers on this route.
+
+```go
+names, err := r.Get("article").GetVarNames()
+// names == ["subdomain", "category", "id", "filter"]
+```
+
+### BuildVarsFunc
+
+```go
+func (r *Route) BuildVarsFunc(f BuildVarsFunc) *Route
+```
+
+Sets a function to transform route variables before URL building. If multiple `BuildVarsFunc` calls are made, they are composed.
+
+```go
+r.HandleFunc("/users/{name}", h).
+    BuildVarsFunc(func(vars map[string]string) map[string]string {
+        vars["name"] = strings.ToLower(vars["name"])
+        return vars
+    }).
+    Name("user")
+```
+
+### BuildOnly
+
+```go
+func (r *Route) BuildOnly() *Route
+```
+
+Marks the route as build-only: it will never match incoming requests, but can be used to generate URLs.
+
+```go
+r.Host("{subdomain}.example.com").
+    Path("/articles/{id}").
+    BuildOnly().
+    Name("article-external")
+```
+
+---
+
+## Subrouting
+
+### Subrouter
+
+```go
+func (r *Route) Subrouter() *Router
+```
+
+Creates a new `Router` that inherits the route's matching conditions. Routes registered on the subrouter are only tested if the parent route matches.
+
+```go
+s := r.Host("api.example.com").Subrouter()
+s.HandleFunc("/users", UsersHandler).Methods("GET")
+s.HandleFunc("/users/{id}", UserHandler).Methods("GET")
+```
+
+---
+
+## Middleware
+
+### Use
+
+```go
+func (r *Route) Use(mwf ...MiddlewareFunc) *Route
+```
+
+Appends middleware to the route's middleware chain. Route middleware runs after router-level middleware but before the route handler.
+
+```go
+r.HandleFunc("/admin", AdminHandler).
+    Methods("GET").
+    Use(authMiddleware)
+```
+
+---
+
+## Introspection
+
+These methods are useful for documentation generation, logging, and instrumentation.
+
+| Method | Returns |
+|--------|---------|
+| `GetPathTemplate() (string, error)` | The raw path template (e.g. `/articles/{id}`) |
+| `GetPathRegexp() (string, error)` | The compiled regexp for the path |
+| `GetQueriesTemplates() ([]string, error)` | Raw query templates |
+| `GetQueriesRegexp() ([]string, error)` | Compiled regexps for queries |
+| `GetMethods() ([]string, error)` | Matched HTTP methods |
+| `GetHostTemplate() (string, error)` | The raw host template |
+| `GetError() error` | Any error that occurred while building the route |
+
+---
+
+## Metadata
+
+Attach arbitrary key/value data to a route for use during `Walk` or custom matchers.
+
+### Metadata
+
+```go
+func (r *Route) Metadata(key any, value any) *Route
+```
+
+### GetMetadata
+
+```go
+func (r *Route) GetMetadata() map[any]any
+```
+
+### MetadataContains
+
+```go
+func (r *Route) MetadataContains(key any) bool
+```
+
+### GetMetadataValue
+
+```go
+func (r *Route) GetMetadataValue(key any) (any, error)
+```
+
+Returns `ErrMetadataKeyNotFound` if the key is absent.
+
+### GetMetadataValueOr
+
+```go
+func (r *Route) GetMetadataValueOr(key any, fallbackValue any) any
+```
+
+Returns `fallbackValue` if the key is absent.
+
+```go
+r.HandleFunc("/articles/{id}", ArticleHandler).
+    Metadata("version", 2).
+    Metadata("auth", true)
+
+err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+    if route.MetadataContains("auth") {
+        fmt.Println("route requires auth:", route.GetMetadataValueOr("auth", false))
+    }
+    return nil
+})
+```

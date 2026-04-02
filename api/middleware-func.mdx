@@ -1,0 +1,134 @@
+---
+title: "Middleware types"
+description: "Type definitions for middleware, matchers, and URL builder functions in gorilla/mux."
+---
+
+## MiddlewareFunc
+
+```go
+type MiddlewareFunc func(http.Handler) http.Handler
+```
+
+`MiddlewareFunc` is the standard middleware signature in gorilla/mux. A middleware receives the next handler and returns a new handler that wraps it. You can attach middleware to a `Router` with `Router.Use()` or to an individual `Route` with `Route.Use()`.
+
+```go
+func loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Println(r.Method, r.RequestURI)
+        next.ServeHTTP(w, r)
+    })
+}
+
+r := mux.NewRouter()
+r.Use(loggingMiddleware)
+```
+
+<Note>
+If a middleware does not call `next.ServeHTTP(w, r)`, the handler chain stops. Middlewares that terminate requests should write a response to `w`. Middlewares that pass through should not write to `w` before calling `next`.
+</Note>
+
+### Execution order
+
+When a request matches a route, middleware runs in this order:
+
+1. Router-level middleware (added via `Router.Use()`), in registration order
+2. Route-level middleware (added via `Route.Use()`), in registration order
+3. The route handler
+
+---
+
+## CORSMethodMiddleware
+
+```go
+func CORSMethodMiddleware(r *Router) MiddlewareFunc
+```
+
+`CORSMethodMiddleware` automatically sets the `Access-Control-Allow-Methods` response header to all HTTP methods registered for the matching route.
+
+<Warning>
+The route **must** have an `OPTIONS` method matcher for this middleware to set the header. Routes without an OPTIONS matcher are not processed.
+</Warning>
+
+You are still responsible for setting other CORS headers (`Access-Control-Allow-Origin`, `Access-Control-Allow-Headers`, etc.) in your handler.
+
+```go
+r := mux.NewRouter()
+
+r.HandleFunc("/api/users", UsersHandler).
+    Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
+
+r.Use(mux.CORSMethodMiddleware(r))
+
+http.ListenAndServe(":8080", r)
+```
+
+The handler must set `Access-Control-Allow-Origin` and return early for OPTIONS requests:
+
+```go
+func UsersHandler(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    if r.Method == http.MethodOptions {
+        return
+    }
+    // handle GET and POST
+}
+```
+
+---
+
+## WalkFunc
+
+```go
+type WalkFunc func(route *Route, router *Router, ancestors []*Route) error
+```
+
+`WalkFunc` is the function signature passed to `Router.Walk`. It is called once for every route registered on the router (and its subrouters, depth-first).
+
+Return `mux.SkipRouter` to skip descending into a subrouter. Return any other non-nil error to stop the walk.
+
+```go
+err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+    tpl, _ := route.GetPathTemplate()
+    methods, _ := route.GetMethods()
+    fmt.Printf("%s %v\n", tpl, methods)
+    return nil
+})
+```
+
+---
+
+## MatcherFunc
+
+```go
+type MatcherFunc func(*http.Request, *RouteMatch) bool
+```
+
+`MatcherFunc` is a custom route matcher. Register it on a route with `Route.MatcherFunc()` or `Router.MatcherFunc()`.
+
+```go
+r.MatcherFunc(func(req *http.Request, rm *mux.RouteMatch) bool {
+    return req.ProtoMajor == 2  // only match HTTP/2 requests
+})
+```
+
+---
+
+## BuildVarsFunc
+
+```go
+type BuildVarsFunc func(map[string]string) map[string]string
+```
+
+`BuildVarsFunc` transforms route variables before a URL is built. Register it on a route with `Route.BuildVarsFunc()`.
+
+```go
+r.HandleFunc("/users/{name}", UserHandler).
+    BuildVarsFunc(func(vars map[string]string) map[string]string {
+        vars["name"] = strings.ToLower(vars["name"])
+        return vars
+    }).
+    Name("user")
+
+url, _ := r.Get("user").URL("name", "Alice")
+// url.Path == "/users/alice"
+```

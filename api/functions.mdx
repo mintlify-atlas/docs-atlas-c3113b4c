@@ -1,0 +1,152 @@
+---
+title: "Package functions"
+description: "Top-level functions and types exported by the gorilla/mux package."
+---
+
+## NewRouter
+
+```go
+func NewRouter() *Router
+```
+
+Creates and returns a new `Router` instance. This is the entry point for all gorilla/mux usage.
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/", HomeHandler)
+http.ListenAndServe(":8080", r)
+```
+
+---
+
+## Vars
+
+```go
+func Vars(r *http.Request) map[string]string
+```
+
+Returns the route variables captured from the URL for the current request. Returns `nil` if no variables were captured.
+
+Call `Vars` inside a handler after the router has matched the request:
+
+```go
+func ArticleHandler(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    id := vars["id"]
+    category := vars["category"]
+    fmt.Fprintf(w, "Article %s in %s\n", id, category)
+}
+```
+
+<Note>
+`mux.Vars(r)` only works inside a handler that was reached via a `mux.Router`. If you call a handler directly (without routing through the router), `Vars` returns `nil`. Use `mux.SetURLVars` in tests to inject variables.
+</Note>
+
+---
+
+## CurrentRoute
+
+```go
+func CurrentRoute(r *http.Request) *Route
+```
+
+Returns the `Route` that matched the current request. Only works when called inside a matched handler, because the route is stored in the request context.
+
+Returns `nil` if `Router.OmitRouteFromContext(true)` was set, or if called outside a matched handler.
+
+```go
+func MyHandler(w http.ResponseWriter, r *http.Request) {
+    route := mux.CurrentRoute(r)
+    name := route.GetName()
+    fmt.Fprintf(w, "Matched route: %s\n", name)
+}
+```
+
+---
+
+## CurrentRouter
+
+```go
+func CurrentRouter(r *http.Request) *Router
+```
+
+Returns the `Router` that matched the current request. Returns `nil` if `Router.OmitRouterFromContext(true)` was set.
+
+```go
+func MyHandler(w http.ResponseWriter, r *http.Request) {
+    router := mux.CurrentRouter(r)
+    // router is the mux.Router that dispatched this request
+}
+```
+
+---
+
+## SetURLVars
+
+```go
+func SetURLVars(r *http.Request, val map[string]string) *http.Request
+```
+
+Sets URL variables on a request for testing purposes. Returns a shallow copy of the request with the variables injected into its context. The original request is not modified.
+
+<Warning>
+This function is intended only for testing. In production, route variables are set automatically by the router when a request is matched.
+</Warning>
+
+```go
+func TestMyHandler(t *testing.T) {
+    req := httptest.NewRequest("GET", "/articles/42", nil)
+    req = mux.SetURLVars(req, map[string]string{"id": "42"})
+
+    rr := httptest.NewRecorder()
+    ArticleHandler(rr, req)
+
+    if rr.Code != http.StatusOK {
+        t.Errorf("expected 200, got %d", rr.Code)
+    }
+}
+```
+
+---
+
+## RouteMatch
+
+```go
+type RouteMatch struct {
+    Route   *Route
+    Handler http.Handler
+    Vars    map[string]string
+    MatchErr error
+}
+```
+
+`RouteMatch` holds information about a matched (or failed) route. It is populated by `Router.Match`.
+
+<ResponseField name="Route" type="*Route">
+  The matched route, or `nil` if no route matched.
+</ResponseField>
+
+<ResponseField name="Handler" type="http.Handler">
+  The handler to invoke. This may be the `NotFoundHandler` or `MethodNotAllowedHandler` if no route matched.
+</ResponseField>
+
+<ResponseField name="Vars" type="map[string]string">
+  URL variables captured from the matched route.
+</ResponseField>
+
+<ResponseField name="MatchErr" type="error">
+  Set to `ErrMethodMismatch` if a route matched the path but not the HTTP method. Set to `ErrNotFound` if no route matched at all.
+</ResponseField>
+
+You typically don't use `RouteMatch` directly — the router handles matching internally in `ServeHTTP`. It can be useful if you need to inspect the match result manually:
+
+```go
+var match mux.RouteMatch
+if r.Match(req, &match) {
+    fmt.Println("matched route:", match.Route.GetName())
+} else if match.MatchErr == mux.ErrMethodMismatch {
+    fmt.Println("method not allowed")
+}
+```
+
+

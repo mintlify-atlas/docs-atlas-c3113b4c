@@ -1,0 +1,108 @@
+---
+title: "Handling CORS"
+description: "Use CORSMethodMiddleware to automatically set Access-Control-Allow-Methods headers."
+---
+
+`mux.CORSMethodMiddleware` automatically sets the `Access-Control-Allow-Methods` response header based on the method matchers configured on your routes. It saves you from manually maintaining a list of allowed methods as you add or change routes.
+
+## What CORSMethodMiddleware does
+
+At request time, the middleware inspects the router's routes, finds all routes that match the incoming path, collects their method matchers, and sets `Access-Control-Allow-Methods` to that list — but only when the route includes an `OPTIONS` method matcher.
+
+```go
+// From middleware.go:
+// CORSMethodMiddleware automatically sets the Access-Control-Allow-Methods response header
+// on requests for routes that have an OPTIONS method matcher to all the method matchers on
+// the route. Routes that do not explicitly handle OPTIONS requests will not be processed
+// by the middleware.
+func CORSMethodMiddleware(r *Router) MiddlewareFunc
+```
+
+<Warning>
+  `CORSMethodMiddleware` only sets `Access-Control-Allow-Methods`. You are responsible for setting all other CORS headers — `Access-Control-Allow-Origin`, `Access-Control-Allow-Headers`, `Access-Control-Max-Age`, and so on — in your handler or in separate middleware.
+</Warning>
+
+## Requirement: OPTIONS method matcher
+
+The middleware checks whether the matched route includes `OPTIONS` in its method list. If the route does not have an `OPTIONS` matcher, the middleware does nothing and no `Access-Control-Allow-Methods` header is set.
+
+This means every route you want CORS headers on must explicitly include `http.MethodOptions` in its `.Methods(...)` call.
+
+## Complete example
+
+```go
+package main
+
+import (
+	"net/http"
+	"github.com/gorilla/mux"
+)
+
+func main() {
+    r := mux.NewRouter()
+
+    // IMPORTANT: you must specify an OPTIONS method matcher for the middleware to set CORS headers
+    r.HandleFunc("/foo", fooHandler).Methods(http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodOptions)
+    r.Use(mux.CORSMethodMiddleware(r))
+    
+    http.ListenAndServe(":8080", r)
+}
+
+func fooHandler(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    if r.Method == http.MethodOptions {
+        return
+    }
+
+    w.Write([]byte("foo"))
+}
+```
+
+A `GET` request to `/foo` produces:
+
+```bash
+curl localhost:8080/foo -v
+```
+
+```
+< HTTP/1.1 200 OK
+< Access-Control-Allow-Methods: GET,PUT,PATCH,OPTIONS
+< Access-Control-Allow-Origin: *
+< Content-Length: 3
+< Content-Type: text/plain; charset=utf-8
+<
+foo
+```
+
+The middleware set `Access-Control-Allow-Methods` automatically from the route's method matchers. The handler set `Access-Control-Allow-Origin` itself.
+
+## Handling OPTIONS separately
+
+An alternative pattern is to separate the OPTIONS handler from the main handler. This is cleaner when the preflight response needs different headers than the actual response:
+
+```go
+r.HandleFunc("/foo", func(w http.ResponseWriter, r *http.Request) {
+    // Handle GET, PUT, PATCH
+}).Methods(http.MethodGet, http.MethodPut, http.MethodPatch)
+
+r.HandleFunc("/foo", func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Access-Control-Allow-Origin", "http://example.com")
+    w.Header().Set("Access-Control-Max-Age", "86400")
+}).Methods(http.MethodOptions)
+
+r.Use(mux.CORSMethodMiddleware(r))
+```
+
+In this case, the middleware collects methods from both `/foo` routes (since both match the same path) and sets `Access-Control-Allow-Methods: GET,PUT,PATCH,OPTIONS`.
+
+## When not to use CORSMethodMiddleware
+
+Do not use this middleware if:
+
+- Your routes do not include an `OPTIONS` method matcher — the middleware will not set any headers.
+- You need to return different allowed methods per origin or based on request headers — the middleware always returns all methods without filtering.
+- You are already using a full CORS library that handles all headers — adding this middleware would be redundant.
+
+<Tip>
+  Pass the router reference to `CORSMethodMiddleware(r)` and then add it with `r.Use(...)`. The middleware holds a reference to the router so it can query routes on each request.
+</Tip>

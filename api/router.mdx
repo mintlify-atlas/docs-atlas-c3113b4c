@@ -1,0 +1,471 @@
+---
+title: "Router"
+description: "The Router type is the central component of gorilla/mux — it registers routes and dispatches requests."
+---
+
+`Router` registers routes to be matched and dispatches a handler. It implements `http.Handler`, so you can pass it directly to `http.ListenAndServe` or any other function that accepts an `http.Handler`.
+
+```go
+r := mux.NewRouter()
+http.ListenAndServe(":8080", r)
+```
+
+## Constructor
+
+### `NewRouter`
+
+```go
+func NewRouter() *Router
+```
+
+Returns a new router instance. Always use `NewRouter` rather than constructing a `Router` literal — the constructor initialises internal state required for named-route lookup.
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/", homeHandler)
+```
+
+## Fields
+
+<ResponseField name="NotFoundHandler" type="http.Handler">
+  Custom handler invoked when no route matches the incoming request. When set, it replaces the default `http.NotFoundHandler()` (HTTP 404). The handler is also assigned to `RouteMatch.Handler` so middleware can inspect it.
+</ResponseField>
+
+<ResponseField name="MethodNotAllowedHandler" type="http.Handler">
+  Custom handler invoked when the request path matches at least one route but none of those routes accept the request's HTTP method. When set, it replaces the default 405 response.
+</ResponseField>
+
+```go
+r := mux.NewRouter()
+
+r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    http.Error(w, "nothing here", http.StatusNotFound)
+})
+
+r.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+})
+```
+
+## Route registration
+
+All route-registration methods create a new `*Route` and return it, allowing you to chain additional matchers.
+
+### `HandleFunc`
+
+```go
+func (r *Router) HandleFunc(path string, f func(http.ResponseWriter, *http.Request)) *Route
+```
+
+Registers a new route with a matcher for the URL path and attaches a handler function. Equivalent to calling `r.NewRoute().Path(path).HandlerFunc(f)`.
+
+<ParamField path="path" type="string" required>
+  URL path template. Must start with `/`. Supports `{variable}` and `{variable:pattern}` syntax.
+</ParamField>
+
+<ParamField path="f" type="func(http.ResponseWriter, *http.Request)" required>
+  Handler function to invoke when the route matches.
+</ParamField>
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/articles/{id:[0-9]+}", articleHandler)
+```
+
+### `Handle`
+
+```go
+func (r *Router) Handle(path string, handler http.Handler) *Route
+```
+
+Registers a new route with a matcher for the URL path and attaches an `http.Handler`. Equivalent to `r.NewRoute().Path(path).Handler(handler)`.
+
+<ParamField path="path" type="string" required>
+  URL path template.
+</ParamField>
+
+<ParamField path="handler" type="http.Handler" required>
+  Handler to invoke when the route matches.
+</ParamField>
+
+```go
+r.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
+```
+
+### `NewRoute`
+
+```go
+func (r *Router) NewRoute() *Route
+```
+
+Registers an empty route and returns it. The new route inherits a copy of the router's current configuration (strict slash, skip clean, etc.). Use this when you want to build a route incrementally.
+
+```go
+r.NewRoute().
+    Host("{subdomain}.example.com").
+    PathPrefix("/api/").
+    HandlerFunc(apiHandler)
+```
+
+### `Name`
+
+```go
+func (r *Router) Name(name string) *Route
+```
+
+Registers a new route with a name. Equivalent to `r.NewRoute().Name(name)`. The name is used to look up the route for URL building.
+
+<ParamField path="name" type="string" required>
+  Unique name for the route.
+</ParamField>
+
+```go
+r.Name("home").Path("/").HandlerFunc(homeHandler)
+
+url, _ := r.Get("home").URL()
+```
+
+### `Host`
+
+```go
+func (r *Router) Host(tpl string) *Route
+```
+
+Registers a new route with a matcher for the URL host. Equivalent to `r.NewRoute().Host(tpl)`.
+
+<ParamField path="tpl" type="string" required>
+  Host template. Supports `{variable}` and `{variable:pattern}` syntax.
+</ParamField>
+
+```go
+r.Host("{subdomain:[a-z]+}.example.com").HandlerFunc(subdomainHandler)
+```
+
+### `Path`
+
+```go
+func (r *Router) Path(tpl string) *Route
+```
+
+Registers a new route with a matcher for the URL path. Equivalent to `r.NewRoute().Path(tpl)`. The template must start with `/` and supports `{variable}` and `{variable:pattern}` syntax.
+
+<ParamField path="tpl" type="string" required>
+  URL path template. Must start with `/`.
+</ParamField>
+
+```go
+r.Path("/articles/{id:[0-9]+}").HandlerFunc(ArticleHandler)
+```
+
+### `PathPrefix`
+
+```go
+func (r *Router) PathPrefix(tpl string) *Route
+```
+
+Registers a new route with a matcher for the URL path prefix. Equivalent to `r.NewRoute().PathPrefix(tpl)`.
+
+<ParamField path="tpl" type="string" required>
+  Path prefix template. Must start with `/`.
+</ParamField>
+
+```go
+r.PathPrefix("/api/").Handler(apiRouter)
+```
+
+### `Methods`
+
+```go
+func (r *Router) Methods(methods ...string) *Route
+```
+
+Registers a new route with a matcher for HTTP methods. Equivalent to `r.NewRoute().Methods(methods...)`. Method names are normalised to uppercase.
+
+<ParamField path="methods" type="...string" required>
+  One or more HTTP method names (e.g. `"GET"`, `"POST"`).
+</ParamField>
+
+```go
+r.Methods("GET", "HEAD").PathPrefix("/api/").HandlerFunc(apiHandler)
+```
+
+### `Schemes`
+
+```go
+func (r *Router) Schemes(schemes ...string) *Route
+```
+
+Registers a new route with a matcher for URL schemes. Equivalent to `r.NewRoute().Schemes(schemes...)`.
+
+<ParamField path="schemes" type="...string" required>
+  One or more URL schemes, e.g. `"http"`, `"https"`.
+</ParamField>
+
+```go
+r.Schemes("https").HandleFunc("/secure", secureHandler)
+```
+
+### `Headers`
+
+```go
+func (r *Router) Headers(pairs ...string) *Route
+```
+
+Registers a new route with a matcher for request header values. Equivalent to `r.NewRoute().Headers(pairs...)`. Accepts key/value pairs; an empty value matches any non-empty header value for that key.
+
+<ParamField path="pairs" type="...string" required>
+  Alternating header name and value strings. Must be an even number of arguments.
+</ParamField>
+
+```go
+r.Headers("X-Requested-With", "XMLHttpRequest").HandlerFunc(ajaxHandler)
+```
+
+### `Queries`
+
+```go
+func (r *Router) Queries(pairs ...string) *Route
+```
+
+Registers a new route with a matcher for URL query values. Equivalent to `r.NewRoute().Queries(pairs...)`.
+
+<ParamField path="pairs" type="...string" required>
+  Alternating query key and value strings. Values may contain `{variable}` patterns.
+</ParamField>
+
+```go
+r.Queries("page", "{page:[0-9]+}").HandlerFunc(pageHandler)
+```
+
+### `MatcherFunc`
+
+```go
+func (r *Router) MatcherFunc(f MatcherFunc) *Route
+```
+
+Registers a new route with a custom matcher function. Equivalent to `r.NewRoute().MatcherFunc(f)`.
+
+<ParamField path="f" type="MatcherFunc" required>
+  A function with signature `func(*http.Request, *RouteMatch) bool`.
+</ParamField>
+
+```go
+r.MatcherFunc(func(req *http.Request, m *mux.RouteMatch) bool {
+    return req.ProtoMajor == 2
+}).HandlerFunc(http2Handler)
+```
+
+### `BuildVarsFunc`
+
+```go
+func (r *Router) BuildVarsFunc(f BuildVarsFunc) *Route
+```
+
+Registers a new route with a custom function for modifying route variables before building a URL.
+
+<ParamField path="f" type="BuildVarsFunc" required>
+  A function with signature `func(map[string]string) map[string]string`.
+</ParamField>
+
+## Middleware
+
+### `Use`
+
+```go
+func (r *Router) Use(mwf ...MiddlewareFunc)
+```
+
+Appends one or more middleware functions to the router's middleware chain. Middleware is executed in the order it is added, after a route match is found. It runs for every matched route on the router, including routes on subrouters.
+
+<ParamField path="mwf" type="...MiddlewareFunc" required>
+  One or more middleware functions with signature `func(http.Handler) http.Handler`.
+</ParamField>
+
+```go
+r := mux.NewRouter()
+r.Use(loggingMiddleware, authMiddleware)
+r.HandleFunc("/", homeHandler)
+```
+
+## Named route lookup
+
+### `Get`
+
+```go
+func (r *Router) Get(name string) *Route
+```
+
+Returns the route registered with the given name, or `nil` if no such route exists. Use this to build URLs for named routes.
+
+<ParamField path="name" type="string" required>
+  The name passed to `Route.Name()`.
+</ParamField>
+
+```go
+r.HandleFunc("/articles/{id}", articleHandler).Name("article")
+
+url, err := r.Get("article").URL("id", "42")
+// url.Path == "/articles/42"
+```
+
+### `GetRoute`
+
+```go
+func (r *Router) GetRoute(name string) *Route
+```
+
+<Warning>
+  Deprecated. This method was renamed to `Get()`. It remains for backwards compatibility and behaves identically.
+</Warning>
+
+## Route inspection
+
+### `Walk`
+
+```go
+func (r *Router) Walk(walkFn WalkFunc) error
+```
+
+Walks the router and all its subrouters, calling `walkFn` for each route in the tree. Routes are walked in the order they were added. Subrouters are explored depth-first.
+
+Return `mux.SkipRouter` from `walkFn` to skip descending into a subrouter. Return any other non-nil error to stop the walk early.
+
+<ParamField path="walkFn" type="WalkFunc" required>
+  A function with signature `func(route *Route, router *Router, ancestors []*Route) error`.
+</ParamField>
+
+```go
+err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+    tpl, _ := route.GetPathTemplate()
+    methods, _ := route.GetMethods()
+    fmt.Printf("Path: %s Methods: %v\n", tpl, methods)
+    return nil
+})
+```
+
+## Configuration
+
+All configuration methods return `*Router` so you can chain them.
+
+### `StrictSlash`
+
+```go
+func (r *Router) StrictSlash(value bool) *Router
+```
+
+Defines the trailing slash behaviour for new routes. The initial value is `false`.
+
+When `true`, if the route path is `/path/`, accessing `/path` performs an HTTP 301 redirect to `/path/`, and vice versa. Your application always sees the path as specified in the route.
+
+When `false`, if the route path is `/path`, accessing `/path/` does not match.
+
+<Note>
+  The redirect causes most HTTP clients to re-issue non-idempotent requests (POST, PUT) as GET. Handle trailing slashes explicitly for those methods instead of relying on `StrictSlash`. This setting has no effect on routes that use `PathPrefix`.
+</Note>
+
+```go
+r := mux.NewRouter()
+r.StrictSlash(true)
+r.HandleFunc("/articles/", ArticlesHandler)
+// GET /articles redirects to /articles/
+```
+
+### `SkipClean`
+
+```go
+func (r *Router) SkipClean(value bool) *Router
+```
+
+Defines the path cleaning behaviour for new routes. The initial value is `false`.
+
+When `false` (the default), the router cleans incoming paths to canonical form — removing double slashes, resolving `.` and `..` — and issues a 301 redirect if the cleaned path differs.
+
+When `true`, paths are not cleaned. This is useful when a path segment encodes a URL, for example `/fetch/http://xkcd.com/534/`.
+
+```go
+r := mux.NewRouter()
+r.SkipClean(true)
+r.HandleFunc("/fetch/{url:.*}", FetchHandler)
+```
+
+### `UseEncodedPath`
+
+```go
+func (r *Router) UseEncodedPath() *Router
+```
+
+Tells the router to match the encoded original path to routes. For example, `/path/foo%2Fbar/to` will match the path `/path/{var}/to`.
+
+Without this call, the router decodes percent-encoded segments before matching, so `/path/foo%2Fbar/to` becomes `/path/foo/bar/to` and would not match `/path/{var}/to`.
+
+```go
+r := mux.NewRouter()
+r.UseEncodedPath()
+r.HandleFunc("/path/{var}/to", handler)
+```
+
+### `OmitRouteFromContext`
+
+```go
+func (r *Router) OmitRouteFromContext(value bool) *Router
+```
+
+When `true`, the matched `*Route` is not stored on the request context. `mux.CurrentRoute(r)` will return `nil` for requests handled by this router.
+
+Route variables (from `mux.Vars`) are still available when `OmitRouteFromContext` is `true`.
+
+### `OmitRouterFromContext`
+
+```go
+func (r *Router) OmitRouterFromContext(value bool) *Router
+```
+
+When `true`, the `*Router` is not stored on the request context. `mux.CurrentRouter(r)` will return `nil` for requests handled by this router.
+
+## Request handling
+
+### `Match`
+
+```go
+func (r *Router) Match(req *http.Request, match *RouteMatch) bool
+```
+
+Attempts to match the given request against the router's registered routes.
+
+If the request matches a route, the `Route`, `Handler`, and `Vars` fields of `match` are filled and `Match` returns `true`. The router middleware chain is also applied to `match.Handler` at this point.
+
+If no route matches, `Match` returns `false`. When available, a reason is stored in `match.MatchErr` (`ErrNotFound` or `ErrMethodMismatch`). If a corresponding custom error handler is registered, it is assigned to `match.Handler`.
+
+<ParamField path="req" type="*http.Request" required>
+  The incoming request to match.
+</ParamField>
+
+<ParamField path="match" type="*RouteMatch" required>
+  Output struct that receives the matched route, handler, variables, and any match error.
+</ParamField>
+
+```go
+var match mux.RouteMatch
+if r.Match(req, &match) {
+    match.Handler.ServeHTTP(w, req)
+} else if match.MatchErr == mux.ErrMethodMismatch {
+    http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+```
+
+### `ServeHTTP`
+
+```go
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request)
+```
+
+Dispatches the handler registered in the matched route. This method makes `Router` implement `http.Handler`.
+
+When there is a match, the route variables can be retrieved inside the handler by calling `mux.Vars(request)`. The matched route is available via `mux.CurrentRoute(request)`.
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/", homeHandler)
+
+http.ListenAndServe(":8080", r)
+```

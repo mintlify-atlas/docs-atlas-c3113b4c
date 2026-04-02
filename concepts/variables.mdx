@@ -1,0 +1,136 @@
+---
+title: "URL Variables"
+description: "Capture dynamic segments from URL paths, hosts, and query strings."
+---
+
+Variables let you capture dynamic segments of a URL and use them inside your handler. You define them in curly braces within a path, host, or query template, and retrieve the captured values with `mux.Vars(r)`.
+
+## Basic syntax
+
+`{name}` captures everything up to the next path separator (`/`). The captured string is stored under `name` in the variables map.
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/products/{key}", ProductHandler)
+r.HandleFunc("/articles/{category}/", ArticlesCategoryHandler)
+```
+
+A request to `/products/widget` captures `key = "widget"`. A request to `/articles/tech/` captures `category = "tech"`.
+
+## Constrained variables
+
+`{name:pattern}` restricts the captured value to a regular expression. The route only matches when the segment satisfies the pattern.
+
+```go
+r := mux.NewRouter()
+// Only matches if id is one or more digits
+r.HandleFunc("/articles/{category}/{id:[0-9]+}", ArticleHandler)
+```
+
+A request to `/articles/tech/42` matches and captures `category = "tech"` and `id = "42"`. A request to `/articles/tech/abc` does not match this route.
+
+<Warning>
+  Patterns must not contain capturing groups `(...)`. Use non-capturing groups `(?:...)` instead. If your pattern includes a capturing group, `gorilla/mux` will panic at startup with a message telling you to use `(?:pattern)`.
+</Warning>
+
+```go
+// Correct: non-capturing group
+r.HandleFunc("/sort/{dir:(?:asc|desc)}", SortHandler)
+
+// Wrong: causes a panic
+// r.HandleFunc("/sort/{dir:(asc|desc)}", SortHandler)
+```
+
+## Reading variables in a handler
+
+Call `mux.Vars(r)` inside your handler to get a `map[string]string` of all captured variables for the current request.
+
+```go
+func ArticleHandler(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    category := vars["category"]
+    id := vars["id"]
+
+    fmt.Fprintf(w, "Category: %s, ID: %s\n", category, id)
+}
+```
+
+`mux.Vars` returns `nil` when no variables were captured. Check for a missing key with the two-value map lookup:
+
+```go
+vars := mux.Vars(r)
+id, ok := vars["id"]
+if !ok {
+    http.Error(w, "missing id", http.StatusBadRequest)
+    return
+}
+```
+
+## Variables in host patterns
+
+Host templates follow the same `{name}` and `{name:pattern}` syntax. Without a pattern, a variable captures everything up to the next dot (`.`) rather than the next slash.
+
+```go
+r := mux.NewRouter()
+
+// Captures subdomain = "api", "app", etc.
+r.Host("{subdomain:[a-z]+}.example.com").
+    HandleFunc("/status", StatusHandler)
+```
+
+Inside the handler, `mux.Vars(r)["subdomain"]` returns the matched subdomain.
+
+## Variables in query patterns
+
+Pass `{name}` or `{name:pattern}` as the value argument to `Queries` to capture a query parameter's value as a named variable.
+
+```go
+r := mux.NewRouter()
+// Matches ?id=42, ?id=100, etc. — captures the numeric value
+r.HandleFunc("/items", ItemHandler).Queries("id", "{id:[0-9]+}")
+```
+
+Access the captured value the same way as path variables:
+
+```go
+func ItemHandler(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    fmt.Fprintf(w, "Item ID: %s\n", vars["id"])
+}
+```
+
+## Variable naming rules
+
+- Names must be unique within a single route. Reusing the same name in the path, host, and query matchers of one route causes an error at registration time.
+- Names can contain any characters except a colon (`:`), which is the separator between name and pattern.
+- Names cannot be empty.
+
+## Discovering required variables
+
+Use `Route.GetVarNames()` to retrieve all variable names defined in a route's path, host, and query matchers. This is useful when building URLs dynamically or generating documentation.
+
+```go
+r := mux.NewRouter()
+r.Host("{domain}").
+    Path("/{group}/{item_id}").
+    Queries("filter", "{filter}").
+    Name("item")
+
+names, err := r.Get("item").GetVarNames()
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(names) // [domain group item_id filter]
+```
+
+You can then pass those names as key/value pairs to `Route.URL()` to build the full URL:
+
+```go
+url, err := r.Get("item").URL(
+    "domain", "example.com",
+    "group", "products",
+    "item_id", "42",
+    "filter", "active",
+)
+// http://example.com/products/42?filter=active
+```

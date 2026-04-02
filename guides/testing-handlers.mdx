@@ -1,0 +1,179 @@
+---
+title: "Testing handlers"
+description: "Write unit tests for mux handlers using httptest and table-driven tests."
+---
+
+gorilla/mux handlers are plain `http.Handler` values. The standard `net/http/httptest` package gives you everything you need to test them without starting a real server.
+
+## Simple handler test
+
+Given a handler in `endpoints.go`:
+
+```go
+// endpoints.go
+package main
+
+func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
+    // A very simple health check.
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOK)
+
+    // In the future we could report back on the status of our DB, or our cache
+    // (e.g. Redis) by performing a simple PING, and include them in the response.
+    io.WriteString(w, `{"alive": true}`)
+}
+
+func main() {
+    r := mux.NewRouter()
+    r.HandleFunc("/health", HealthCheckHandler)
+
+    log.Fatal(http.ListenAndServe("localhost:8080", r))
+}
+```
+
+Test it in `endpoints_test.go`:
+
+```go
+// endpoints_test.go
+package main
+
+import (
+    "net/http"
+    "net/http/httptest"
+    "testing"
+)
+
+func TestHealthCheckHandler(t *testing.T) {
+    // Create a request to pass to our handler. We don't have any query parameters for now, so we'll
+    // pass 'nil' as the third parameter.
+    req, err := http.NewRequest("GET", "/health", nil)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // We create a ResponseRecorder (which satisfies http.ResponseWriter) to record the response.
+    rr := httptest.NewRecorder()
+    handler := http.HandlerFunc(HealthCheckHandler)
+
+    // Our handlers satisfy http.Handler, so we can call their ServeHTTP method
+    // directly and pass in our Request and ResponseRecorder.
+    handler.ServeHTTP(rr, req)
+
+    // Check the status code is what we expect.
+    if status := rr.Code; status != http.StatusOK {
+        t.Errorf("handler returned wrong status code: got %v want %v",
+            status, http.StatusOK)
+    }
+
+    // Check the response body is what we expect.
+    expected := `{"alive": true}`
+    if rr.Body.String() != expected {
+        t.Errorf("handler returned unexpected body: got %v want %v",
+            rr.Body.String(), expected)
+    }
+}
+```
+
+`httptest.NewRecorder` returns an `httptest.ResponseRecorder` that satisfies `http.ResponseWriter`. After `ServeHTTP` returns, `rr.Code` holds the status code and `rr.Body` holds the response body.
+
+## Testing handlers with route variables
+
+Calling a handler directly bypasses the router, so `mux.Vars(r)` returns nil — the route variables were never populated. To test a handler that reads from `mux.Vars`, pass the request through a router:
+
+```go
+// endpoints.go
+func main() {
+    r := mux.NewRouter()
+    // A route with a route variable:
+    r.HandleFunc("/metrics/{type}", MetricsHandler)
+
+    log.Fatal(http.ListenAndServe("localhost:8080", r))
+}
+```
+
+```go
+// endpoints_test.go
+func TestMetricsHandler(t *testing.T) {
+    tt := []struct{
+        routeVariable string
+        shouldPass bool
+    }{
+        {"goroutines", true},
+        {"heap", true},
+        {"counters", true},
+        {"queries", true},
+        {"adhadaeqm3k", false},
+    }
+
+    for _, tc := range tt {
+        path := fmt.Sprintf("/metrics/%s", tc.routeVariable)
+        req, err := http.NewRequest("GET", path, nil)
+        if err != nil {
+            t.Fatal(err)
+        }
+
+        rr := httptest.NewRecorder()
+	
+        // To add the vars to the context, 
+        // we need to create a router through which we can pass the request.
+        router := mux.NewRouter()
+        router.HandleFunc("/metrics/{type}", MetricsHandler)
+        router.ServeHTTP(rr, req)
+
+        // In this case, our MetricsHandler returns a non-200 response
+        // for a route variable it doesn't know about.
+        if rr.Code == http.StatusOK && !tc.shouldPass {
+            t.Errorf("handler should have failed on routeVariable %s: got %v want %v",
+                tc.routeVariable, rr.Code, http.StatusOK)
+        }
+    }
+}
+```
+
+The router's `ServeHTTP` populates `mux.Vars` in the request context before calling `MetricsHandler`, so the handler sees the correct variable values.
+
+## SetURLVars test helper
+
+For cases where you want to test a handler directly without routing through a full router, `mux.SetURLVars` injects variables into the request context manually:
+
+```go
+func SetURLVars(r *http.Request, val map[string]string) *http.Request
+```
+
+`SetURLVars` does not modify the original request — it returns a shallow copy with the variables added to its context. Use the returned request in your test:
+
+```go
+func TestArticleHandler(t *testing.T) {
+    req, err := http.NewRequest("GET", "/articles/technology/42", nil)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // Inject route variables directly, without going through a router
+    req = mux.SetURLVars(req, map[string]string{
+        "category": "technology",
+        "id":       "42",
+    })
+
+    rr := httptest.NewRecorder()
+    handler := http.HandlerFunc(ArticleHandler)
+    handler.ServeHTTP(rr, req)
+
+    if rr.Code != http.StatusOK {
+        t.Errorf("expected 200, got %d", rr.Code)
+    }
+}
+```
+
+<Note>
+  `SetURLVars` is intended for testing only. It bypasses the router entirely, so it does not validate that the variables match the route's regexp patterns.
+</Note>
+
+## Choosing between the two approaches
+
+| Approach | Use when |
+|---|---|
+| Route through a real router | You want to test the full request lifecycle including routing, middleware, and variable extraction. |
+| `SetURLVars` directly | You want a focused unit test of the handler logic without the overhead of routing setup. |
+
+Both approaches work with `httptest.NewRecorder` and require no running server.

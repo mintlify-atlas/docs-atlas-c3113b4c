@@ -1,0 +1,114 @@
+---
+title: "Graceful shutdown"
+description: "Handle SIGINT to drain active connections before shutting down your server."
+---
+
+When you stop a server abruptly, any in-flight requests are dropped mid-response. Graceful shutdown gives those connections time to finish before the process exits.
+
+Go's `*http.Server` has a `Shutdown` method that stops accepting new connections and waits for active connections to complete, up to a configurable deadline.
+
+## Why this matters
+
+Without graceful shutdown:
+
+- Clients mid-download receive a broken response or a connection reset.
+- Requests being processed lose their work — any writes or side effects that were in progress are abandoned.
+- Monitoring systems may record false errors from requests that were cut off rather than completed.
+
+## Complete example
+
+```go
+package main
+
+import (
+    "context"
+    "flag"
+    "log"
+    "net/http"
+    "os"
+    "os/signal"
+    "time"
+
+    "github.com/gorilla/mux"
+)
+
+func main() {
+    var wait time.Duration
+    flag.DurationVar(&wait, "graceful-timeout", time.Second * 15, "the duration for which the server gracefully wait for existing connections to finish - e.g. 15s or 1m")
+    flag.Parse()
+
+    r := mux.NewRouter()
+    // Add your routes as needed
+
+    srv := &http.Server{
+        Addr:         "0.0.0.0:8080",
+        // Good practice to set timeouts to avoid Slowloris attacks.
+        WriteTimeout: time.Second * 15,
+        ReadTimeout:  time.Second * 15,
+        IdleTimeout:  time.Second * 60,
+        Handler: r, // Pass our instance of gorilla/mux in.
+    }
+
+    // Run our server in a goroutine so that it doesn't block.
+    go func() {
+        if err := srv.ListenAndServe(); err != nil {
+            log.Println(err)
+        }
+    }()
+
+    c := make(chan os.Signal, 1)
+    // We'll accept graceful shutdowns when quit via SIGINT (Ctrl+C)
+    // SIGKILL, SIGQUIT or SIGTERM (Ctrl+/) will not be caught.
+    signal.Notify(c, os.Interrupt)
+
+    // Block until we receive our signal.
+    <-c
+
+    // Create a deadline to wait for.
+    ctx, cancel := context.WithTimeout(context.Background(), wait)
+    defer cancel()
+    // Doesn't block if no connections, but will otherwise wait
+    // until the timeout deadline.
+    srv.Shutdown(ctx)
+    // Optionally, you could run srv.Shutdown in a goroutine and block on
+    // <-ctx.Done() if your application should wait for other services
+    // to finalize based on context cancellation.
+    log.Println("shutting down")
+    os.Exit(0)
+}
+```
+
+## How it works
+
+<Steps>
+  <Step title="Start the server in a goroutine">
+    `srv.ListenAndServe` blocks, so it runs in its own goroutine. The main goroutine continues to the signal setup.
+  </Step>
+  <Step title="Block on the signal channel">
+    `<-c` blocks until `signal.Notify` delivers a value. The server handles requests normally during this time.
+  </Step>
+  <Step title="Receive SIGINT">
+    Pressing Ctrl+C sends `os.Interrupt` to the process. `signal.Notify` forwards it to `c`, unblocking the main goroutine.
+  </Step>
+  <Step title="Shut down with a deadline">
+    `context.WithTimeout` creates a context that expires after `--graceful-timeout`. `srv.Shutdown(ctx)` stops accepting new connections and waits for active ones to finish, up to the deadline. If the deadline passes before all connections close, `Shutdown` returns an error but the server still stops.
+  </Step>
+</Steps>
+
+## The --graceful-timeout flag
+
+The example uses a flag to make the shutdown timeout configurable at runtime:
+
+```bash
+go run main.go --graceful-timeout=30s
+```
+
+The default is 15 seconds. Adjust it based on your application's expected maximum request duration.
+
+<Warning>
+  `SIGKILL` and `SIGTERM` are not caught by this example. On most Linux systems, container orchestrators (Docker, Kubernetes) send `SIGTERM` before force-killing with `SIGKILL`. If you deploy to Kubernetes, add `os.Signal(syscall.SIGTERM)` to the `signal.Notify` call to handle the pod shutdown sequence correctly.
+</Warning>
+
+<Note>
+  `srv.Shutdown` causes `srv.ListenAndServe` to return `http.ErrServerClosed`. The goroutine logs this — you may want to filter it out since it is expected during a graceful shutdown.
+</Note>

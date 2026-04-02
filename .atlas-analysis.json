@@ -1,0 +1,108 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "gorilla/mux",
+  "projectDescription": "A powerful HTTP router and URL matcher for building Go web servers, compatible with the standard net/http package.",
+  "theme": "palm",
+  "primaryColor": "#585757",
+  "lightColor": "#c7c0b7",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/routing",
+              "concepts/variables",
+              "concepts/subrouters",
+              "concepts/middleware"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/matching-routes",
+              "guides/url-building",
+              "guides/static-files",
+              "guides/single-page-apps",
+              "guides/cors",
+              "guides/graceful-shutdown",
+              "guides/testing-handlers"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Router",
+            "pages": [
+              "api/router",
+              "api/route",
+              "api/middleware-func"
+            ]
+          },
+          {
+            "group": "Functions",
+            "pages": [
+              "api/functions",
+              "api/errors"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Pattern-based URL routing with named variables and regex constraints",
+    "Route matching by host, path, HTTP method, schemes, headers, and query values",
+    "Subrouters for grouped route namespaces with shared conditions",
+    "URL building (reverse routing) from named routes",
+    "Middleware support via MiddlewareFunc with ordered execution",
+    "Built-in CORSMethodMiddleware for automatic CORS header management",
+    "Router.Walk() for programmatic route introspection",
+    "Full compatibility with Go's standard net/http.Handler interface"
+  ],
+  "publicApiSurface": [
+    "mux.NewRouter() *Router",
+    "Router.HandleFunc(path string, f func(http.ResponseWriter, *http.Request)) *Route",
+    "Router.Handle(path string, handler http.Handler) *Route",
+    "Router.Host(tpl string) *Route",
+    "Router.PathPrefix(tpl string) *Route",
+    "Router.Methods(methods ...string) *Route",
+    "Router.Schemes(schemes ...string) *Route",
+    "Router.Headers(pairs ...string) *Route",
+    "Router.Queries(pairs ...string) *Route",
+    "Router.Use(mwf ...MiddlewareFunc)",
+    "Router.Walk(walkFn WalkFunc) error",
+    "Router.StrictSlash(value bool) *Router",
+    "Router.SkipClean(value bool) *Router",
+    "Router.UseEncodedPath() *Router",
+    "Route.Subrouter() *Router",
+    "Route.Name(name string) *Route",
+    "Route.URL(pairs ...string) (*url.URL, error)",
+    "Route.URLPath(pairs ...string) (*url.URL, error)",
+    "Route.URLHost(pairs ...string) (*url.URL, error)",
+    "Route.GetVarNames() ([]string, error)",
+    "Route.Metadata(key any, value any) *Route",
+    "mux.Vars(r *http.Request) map[string]string",
+    "mux.CurrentRoute(r *http.Request) *Route",
+    "mux.CORSMethodMiddleware(r *Router) MiddlewareFunc",
+    "type MiddlewareFunc func(http.Handler) http.Handler",
+    "type WalkFunc func(route *Route, router *Router, ancestors []*Route) error",
+    "type BuildVarsFunc func(map[string]string) map[string]string",
+    "ErrMethodMismatch",
+    "ErrNotFound",
+    "SkipRouter"
+  ]
+}

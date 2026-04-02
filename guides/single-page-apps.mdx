@@ -1,0 +1,137 @@
+---
+title: "Single page applications"
+description: "Serve a React, Vue, or other SPA alongside your API with gorilla/mux."
+---
+
+Single page applications use client-side routing: the browser loads one HTML file and JavaScript handles subsequent navigation. The server must serve `index.html` for any path that does not correspond to a real file, so the SPA's router can take over.
+
+gorilla/mux makes it straightforward to serve an SPA alongside a JSON API — your API routes take priority, and the SPA handler catches everything else.
+
+## The spaHandler type
+
+The `spaHandler` type implements `http.Handler`. It holds the path to the static file directory and the path to the index file within that directory.
+
+```go
+type spaHandler struct {
+    staticPath string
+    indexPath  string
+}
+```
+
+Its `ServeHTTP` method checks whether the requested path corresponds to a real file. If it does, `http.FileServer` serves it. If it does not (or if the path points to a directory), `http.ServeFile` serves `index.html` instead — letting the SPA's client-side router handle the route.
+
+```go
+func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    // Join internally call path.Clean to prevent directory traversal
+    path := filepath.Join(h.staticPath, r.URL.Path)
+
+    // check whether a file exists or is a directory at the given path
+    fi, err := os.Stat(path)
+    if os.IsNotExist(err) || fi.IsDir() {
+        // file does not exist or path is a directory, serve index.html
+        http.ServeFile(w, r, filepath.Join(h.staticPath, h.indexPath))
+        return
+    }
+
+    if err != nil {
+        // if we got an error (that wasn't that the file doesn't exist) stating the
+        // file, return a 500 internal server error and stop
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+
+    // otherwise, use http.FileServer to serve the static file
+    http.FileServer(http.Dir(h.staticPath)).ServeHTTP(w, r)
+}
+```
+
+<Note>
+  `filepath.Join` internally calls `filepath.Clean`, which eliminates `..` path segments. This prevents directory traversal attacks where a crafted URL might escape the static directory.
+</Note>
+
+## Complete example
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/gorilla/mux"
+)
+
+type spaHandler struct {
+	staticPath string
+	indexPath  string
+}
+
+func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Join internally call path.Clean to prevent directory traversal
+	path := filepath.Join(h.staticPath, r.URL.Path)
+
+	// check whether a file exists or is a directory at the given path
+	fi, err := os.Stat(path)
+	if os.IsNotExist(err) || fi.IsDir() {
+		// file does not exist or path is a directory, serve index.html
+		http.ServeFile(w, r, filepath.Join(h.staticPath, h.indexPath))
+		return
+	}
+
+	if err != nil {
+		// if we got an error (that wasn't that the file doesn't exist) stating the
+		// file, return a 500 internal server error and stop
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// otherwise, use http.FileServer to serve the static file
+	http.FileServer(http.Dir(h.staticPath)).ServeHTTP(w, r)
+}
+
+func main() {
+	router := mux.NewRouter()
+
+	router.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		// an example API handler
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	})
+
+	spa := spaHandler{staticPath: "build", indexPath: "index.html"}
+	router.PathPrefix("/").Handler(spa)
+
+	srv := &http.Server{
+		Handler: router,
+		Addr:    "127.0.0.1:8000",
+		// Good practice: enforce timeouts for servers you create!
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  15 * time.Second,
+	}
+
+	log.Fatal(srv.ListenAndServe())
+}
+```
+
+## How the routing works
+
+Because gorilla/mux evaluates routes in registration order, the `/api/health` route is registered before the `PathPrefix("/")` SPA handler. API requests are matched first and never reach `spaHandler`. Any path that does not match an API route falls through to the SPA handler.
+
+<Steps>
+  <Step title="API request arrives">
+    A request to `/api/health` matches the registered `HandleFunc` and is handled directly. The SPA handler is never invoked.
+  </Step>
+  <Step title="Known static asset request arrives">
+    A request to `/static/logo.png` reaches `spaHandler.ServeHTTP`. `os.Stat` succeeds and `http.FileServer` serves the file.
+  </Step>
+  <Step title="Unknown path arrives">
+    A request to `/dashboard/settings` reaches `spaHandler.ServeHTTP`. `os.Stat` returns `os.IsNotExist`, so `http.ServeFile` serves `build/index.html`. The browser's JavaScript router handles `/dashboard/settings`.
+  </Step>
+</Steps>
+
+<Tip>
+  Point `staticPath` at the output directory of your frontend build tool — `build` for Create React App, `dist` for Vite, and so on.
+</Tip>

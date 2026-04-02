@@ -1,0 +1,218 @@
+---
+title: "Routing"
+description: "How gorilla/mux matches incoming HTTP requests to registered handlers."
+---
+
+`mux.Router` maintains an ordered list of registered routes. When a request arrives, the router walks that list and tests each route in registration order. The first route whose conditions all pass wins — the router calls its handler and stops checking further routes.
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/specific", specificHandler)
+r.PathPrefix("/").Handler(catchAllHandler) // only reached if /specific didn't match
+```
+
+## Matching conditions
+
+Every condition you attach to a route is an additional constraint. A route only matches when **all** conditions pass.
+
+<CardGroup cols={2}>
+  <Card title="Path" icon="link">
+    Exact path match. Supports variables and regex patterns.
+  </Card>
+  <Card title="Path prefix" icon="folder-tree">
+    Matches any path that begins with the given prefix.
+  </Card>
+  <Card title="Host" icon="server">
+    Match on the request hostname or subdomain.
+  </Card>
+  <Card title="Methods" icon="arrow-right-arrow-left">
+    Restrict a route to one or more HTTP methods.
+  </Card>
+  <Card title="Schemes" icon="lock">
+    Match `http` or `https`.
+  </Card>
+  <Card title="Headers" icon="list">
+    Require specific request header values.
+  </Card>
+  <Card title="Query values" icon="magnifying-glass">
+    Require specific URL query parameters.
+  </Card>
+  <Card title="Custom matcher" icon="code">
+    Arbitrary Go function that inspects the request.
+  </Card>
+</CardGroup>
+
+### Path
+
+`Path` requires the URL path to match the given template exactly. Templates must start with `/`.
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/products/", ProductsHandler)
+r.HandleFunc("/products/{key}", ProductHandler)
+r.HandleFunc("/articles/{category}/{id:[0-9]+}", ArticleHandler)
+```
+
+See [URL Variables](/concepts/variables) for the full variable syntax.
+
+### Path prefix
+
+`PathPrefix` matches any URL whose path begins with the given template. The router does not treat slashes specially — `/foobar/baz` will be matched by the prefix `/foo`. Use a trailing slash when you want clean prefix boundaries.
+
+```go
+r.PathPrefix("/api/").Handler(apiRouter)
+```
+
+<Note>
+  `StrictSlash` has no effect on routes that use `PathPrefix`. The redirect logic cannot be determined from a prefix alone. Subrouters created from a `PathPrefix` route do inherit the parent router's `StrictSlash` setting.
+</Note>
+
+### Host
+
+`Host` matches the request's hostname. It accepts a literal hostname or a template with variables.
+
+```go
+// Literal host
+r.Host("www.example.com")
+
+// Dynamic subdomain — matches api.example.com, app.example.com, etc.
+r.Host("{subdomain:[a-z]+}.example.com")
+```
+
+### Methods
+
+`Methods` restricts the route to one or more HTTP methods. Method names are case-insensitive — `mux` normalises them to uppercase.
+
+```go
+r.HandleFunc("/articles", ArticlesHandler).Methods("GET")
+r.HandleFunc("/articles", CreateArticleHandler).Methods("POST")
+```
+
+When a request's path matches a route but the method does not, the router sets `MatchErr` to `ErrMethodMismatch` and — if a `MethodNotAllowedHandler` is registered — serves a 405 response.
+
+### Schemes
+
+`Schemes` restricts the route to specific URL schemes. On server requests, the scheme is inferred from the TLS state of the connection when not explicitly set.
+
+```go
+r.HandleFunc("/secure", SecureHandler).Schemes("https")
+```
+
+### Headers
+
+`Headers` requires all listed header key/value pairs to be present. Provide pairs of `key, value` strings. An empty value matches any non-empty header value for that key.
+
+```go
+r.HandleFunc("/api/data", DataHandler).
+    Headers("X-Requested-With", "XMLHttpRequest")
+```
+
+For regex-based header matching, use `HeadersRegexp`:
+
+```go
+r.HandleFunc("/upload", UploadHandler).
+    HeadersRegexp("Content-Type", "application/(json|octet-stream)")
+```
+
+### Query values
+
+`Queries` requires URL query parameters to be present and optionally match a specific value or pattern. Provide pairs of `key, value` strings.
+
+```go
+// Require ?page=1
+r.HandleFunc("/items", ItemsHandler).Queries("page", "1")
+
+// Require ?id=<digits>
+r.HandleFunc("/items", ItemHandler).Queries("id", "{id:[0-9]+}")
+
+// Require the key to be present with any value
+r.HandleFunc("/search", SearchHandler).Queries("q", "")
+```
+
+### Custom matchers
+
+`MatcherFunc` accepts any function with the signature `func(*http.Request, *mux.RouteMatch) bool`. This gives you full access to the request for conditions that don't fit the built-in matchers.
+
+```go
+r.HandleFunc("/", LegacyHandler).MatcherFunc(func(r *http.Request, rm *mux.RouteMatch) bool {
+    return r.ProtoMajor == 1
+})
+```
+
+## Chaining conditions
+
+All matcher methods return the `*Route`, so you can chain them:
+
+```go
+r.HandleFunc("/products", ProductsHandler).
+    Host("www.example.com").
+    Methods("GET").
+    Schemes("https").
+    Headers("Accept", "application/json")
+```
+
+The route matches only when every condition is satisfied.
+
+## Router options
+
+Three options control how the router normalises incoming request paths before matching.
+
+### StrictSlash
+
+When `StrictSlash(true)` is set, the router redirects requests that differ from the registered path only by a trailing slash. The redirect is an HTTP 301.
+
+```go
+r := mux.NewRouter()
+r.StrictSlash(true)
+
+// GET /articles/ redirects to /articles, and vice versa
+r.HandleFunc("/articles", ArticlesHandler)
+```
+
+<Warning>
+  The 301 redirect causes most HTTP clients to re-issue non-idempotent requests (POST, PUT, PATCH) as GET. If your routes use those methods, handle the trailing slash explicitly instead of relying on `StrictSlash`.
+</Warning>
+
+### SkipClean
+
+By default, the router cleans incoming paths to canonical form — removing double slashes, resolving `.` and `..`, and redirecting to the cleaned path with a 301. Set `SkipClean(true)` to disable this behaviour when your routes intentionally contain double slashes (for example, when a path segment encodes a URL).
+
+```go
+r := mux.NewRouter()
+r.SkipClean(true)
+
+// /fetch/http://example.com/page stays as-is instead of being cleaned
+r.HandleFunc("/fetch/{url}", FetchHandler)
+```
+
+### UseEncodedPath
+
+By default, the router decodes percent-encoded path segments before matching. Call `UseEncodedPath()` to match against the raw encoded path instead.
+
+```go
+r := mux.NewRouter()
+r.UseEncodedPath()
+
+// /path/foo%2Fbar/to matches /path/{var}/to
+r.HandleFunc("/path/{var}/to", Handler)
+```
+
+Without `UseEncodedPath`, `/path/foo%2Fbar/to` would be decoded to `/path/foo/bar/to` before matching, which would not match `/path/{var}/to`.
+
+## Custom error handlers
+
+You can replace the router's default 404 and 405 responses with your own handlers:
+
+```go
+r := mux.NewRouter()
+
+r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    http.Error(w, "nothing here", http.StatusNotFound)
+})
+
+r.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+})
+```
+
+`MethodNotAllowedHandler` is only invoked when a path matches at least one registered route but none of those routes accept the request's HTTP method.

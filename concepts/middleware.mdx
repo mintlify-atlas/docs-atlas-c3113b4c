@@ -1,0 +1,185 @@
+---
+title: "Middleware"
+description: "Intercept and modify requests and responses using the MiddlewareFunc interface."
+---
+
+Middleware is code that runs between the router and your handler. Each middleware receives the next handler in the chain, does something with the request or response, and then (optionally) calls the next handler.
+
+## The MiddlewareFunc type
+
+`gorilla/mux` defines middleware using the standard Go signature:
+
+```go
+type MiddlewareFunc func(http.Handler) http.Handler
+```
+
+A middleware function takes an `http.Handler` (the next handler in the chain) and returns a new `http.Handler`. The returned handler is typically a closure that wraps the original.
+
+## Writing a middleware function
+
+The closure pattern gives you access to the next handler while retaining the `http.Handler` interface:
+
+```go
+func loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Println(r.RequestURI)
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+When a request arrives, `log.Println` runs first, then `next.ServeHTTP` forwards the request to the next middleware or final handler.
+
+## Adding middleware to a router
+
+Attach middleware to a router with `Router.Use()`. It accepts one or more `MiddlewareFunc` values. Middleware added to a router runs for every matched route on that router, including routes on its subrouters.
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/", homeHandler)
+r.Use(loggingMiddleware)
+```
+
+Pass multiple middleware functions to register them all at once:
+
+```go
+r.Use(loggingMiddleware, authMiddleware, rateLimitMiddleware)
+```
+
+Middleware runs in the order it is added.
+
+## Adding middleware to a single route
+
+Use `Route.Use()` to attach middleware that only runs for one specific route. Route middleware runs after router middleware but before the route handler.
+
+```go
+r := mux.NewRouter()
+r.Use(loggingMiddleware) // runs for all routes
+
+r.HandleFunc("/admin", AdminHandler).
+    Methods("GET").
+    Use(adminAuthMiddleware) // runs only for /admin
+```
+
+## Execution order
+
+For any matched request, the execution order is:
+
+1. Router middleware (in registration order)
+2. Route middleware (in registration order)
+3. Route handler
+
+## Stopping the chain
+
+If middleware does not call `next.ServeHTTP`, the chain stops — the handler and any downstream middleware are never called. This is the correct pattern for short-circuiting a request (for example, returning 403 when authentication fails).
+
+<Warning>
+  If your middleware terminates the request, write a response to `ResponseWriter` before returning. If your middleware passes the request along, do not write to `ResponseWriter` — let the handler do it. Writing to `ResponseWriter` and then calling `next.ServeHTTP` causes two responses to be sent, which is a protocol error.
+</Warning>
+
+## Logging middleware example
+
+```go
+func loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Printf("%s %s", r.Method, r.RequestURI)
+        next.ServeHTTP(w, r)
+    })
+}
+
+r := mux.NewRouter()
+r.HandleFunc("/", homeHandler)
+r.Use(loggingMiddleware)
+```
+
+## Authentication middleware example
+
+Struct-based middleware lets you inject dependencies (a token store, a database connection, a logger) without global state:
+
+```go
+type authenticationMiddleware struct {
+    tokenUsers map[string]string
+}
+
+func (amw *authenticationMiddleware) Populate() {
+    amw.tokenUsers["00000000"] = "user0"
+    amw.tokenUsers["aaaaaaaa"] = "userA"
+    amw.tokenUsers["05f717e5"] = "randomUser"
+    amw.tokenUsers["deadbeef"] = "user0"
+}
+
+func (amw *authenticationMiddleware) Middleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        token := r.Header.Get("X-Session-Token")
+
+        if user, found := amw.tokenUsers[token]; found {
+            log.Printf("Authenticated user %s\n", user)
+            next.ServeHTTP(w, r)
+        } else {
+            http.Error(w, "Forbidden", http.StatusForbidden)
+        }
+    })
+}
+```
+
+Register the middleware by passing the method value:
+
+```go
+r := mux.NewRouter()
+r.HandleFunc("/", homeHandler)
+
+amw := authenticationMiddleware{tokenUsers: make(map[string]string)}
+amw.Populate()
+
+r.Use(amw.Middleware)
+```
+
+When the token is not found, `http.Error` writes a 403 response and the function returns without calling `next.ServeHTTP`, stopping the chain.
+
+## CORSMethodMiddleware
+
+`mux.CORSMethodMiddleware` automatically sets the `Access-Control-Allow-Methods` response header for routes that include an `OPTIONS` method matcher. It inspects the router's routes at request time and collects all methods registered for the matching path.
+
+<Note>
+  `CORSMethodMiddleware` only handles the `Access-Control-Allow-Methods` header. You still need to set other CORS headers (`Access-Control-Allow-Origin`, `Access-Control-Allow-Headers`, etc.) in your own handler or middleware.
+</Note>
+
+```go
+package main
+
+import (
+    "net/http"
+    "github.com/gorilla/mux"
+)
+
+func main() {
+    r := mux.NewRouter()
+
+    // The OPTIONS matcher is required for CORSMethodMiddleware to set the header
+    r.HandleFunc("/foo", fooHandler).
+        Methods(http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodOptions)
+
+    r.Use(mux.CORSMethodMiddleware(r))
+
+    http.ListenAndServe(":8080", r)
+}
+
+func fooHandler(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    if r.Method == http.MethodOptions {
+        return
+    }
+    w.Write([]byte("foo"))
+}
+```
+
+A `GET /foo` response will include:
+
+```
+Access-Control-Allow-Methods: GET,PUT,PATCH,OPTIONS
+Access-Control-Allow-Origin: *
+```
+
+<Tip>
+  Pass the router instance to `CORSMethodMiddleware(r)` before adding it with `r.Use(...)`. The middleware captures a reference to the router so it can look up routes at request time.
+</Tip>

@@ -1,0 +1,102 @@
+---
+title: "Errors"
+description: "Sentinel error values returned by gorilla/mux."
+---
+
+## ErrMethodMismatch
+
+```go
+var ErrMethodMismatch = errors.New("method is not allowed")
+```
+
+Returned (as `RouteMatch.MatchErr`) when a route matched the request path but not the HTTP method. This corresponds to an HTTP 405 Method Not Allowed response.
+
+You can check for this error when calling `Router.Match` manually:
+
+```go
+var match mux.RouteMatch
+if !r.Match(req, &match) {
+    if match.MatchErr == mux.ErrMethodMismatch {
+        http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    http.NotFound(w, req)
+    return
+}
+```
+
+To serve a custom 405 response automatically, set `Router.MethodNotAllowedHandler`:
+
+```go
+r := mux.NewRouter()
+r.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusMethodNotAllowed)
+    fmt.Fprintln(w, `{"error":"method not allowed"}`)
+})
+```
+
+---
+
+## ErrNotFound
+
+```go
+var ErrNotFound = errors.New("no matching route was found")
+```
+
+Returned (as `RouteMatch.MatchErr`) when no registered route matched the request. This corresponds to an HTTP 404 Not Found response.
+
+To serve a custom 404 response automatically, set `Router.NotFoundHandler`:
+
+```go
+r := mux.NewRouter()
+r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusNotFound)
+    fmt.Fprintln(w, `{"error":"not found"}`)
+})
+```
+
+---
+
+## ErrMetadataKeyNotFound
+
+```go
+var ErrMetadataKeyNotFound = errors.New("key not found in metadata")
+```
+
+Returned by `Route.GetMetadataValue` when the specified key does not exist in the route's metadata map.
+
+```go
+value, err := route.GetMetadataValue("myKey")
+if errors.Is(err, mux.ErrMetadataKeyNotFound) {
+    // key not set on this route
+}
+```
+
+Use `Route.GetMetadataValueOr` to avoid this error by providing a fallback value:
+
+```go
+value := route.GetMetadataValueOr("myKey", "default")
+```
+
+---
+
+## SkipRouter
+
+```go
+var SkipRouter = errors.New("skip this router")
+```
+
+A sentinel value used as a return from a `WalkFunc` to tell `Router.Walk` to skip descending into the current subrouter. It is not a real error — returning it from a `WalkFunc` does not abort the walk.
+
+```go
+err := router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+    tpl, err := route.GetPathTemplate()
+    if err != nil {
+        return mux.SkipRouter // skip subrouters with no path
+    }
+    fmt.Println(tpl)
+    return nil
+})
+```

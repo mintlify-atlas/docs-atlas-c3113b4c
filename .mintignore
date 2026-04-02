@@ -5,3 +5,10 @@
 # Draft content
 drafts/
 *.draft.mdx
+
+# Leftover starter kit files (not part of gorilla/mux docs)
+essentials/
+ai-tools/
+api-reference/
+development.mdx
+snippets/

@@ -1,0 +1,148 @@
+---
+title: "Route matching"
+description: "Use Router.Walk to inspect and debug all registered routes."
+---
+
+`Router.Walk` visits every route registered on a router and its subrouters. It is useful for generating route documentation, wiring instrumentation, and debugging unexpected matching behavior.
+
+## WalkFunc signature
+
+```go
+type WalkFunc func(route *Route, router *Router, ancestors []*Route) error
+```
+
+Walk calls your function once for each route in registration order. Subrouters are explored depth-first. The `ancestors` slice contains every parent route that leads to the current route — useful when a route is nested inside a subrouter.
+
+Return `mux.SkipRouter` from your `WalkFunc` to skip descending into a subrouter without stopping the walk entirely. Any other non-nil error stops the walk and is returned from `Router.Walk`.
+
+```go
+var SkipRouter = errors.New("skip this router")
+```
+
+## Printing all registered routes
+
+The following example registers several routes and then walks the router to print each route's path template, path regexp, query templates, query regexps, and HTTP methods.
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/gorilla/mux"
+)
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	return
+}
+
+func main() {
+	r := mux.NewRouter()
+	r.HandleFunc("/", handler)
+	r.HandleFunc("/products", handler).Methods("POST")
+	r.HandleFunc("/articles", handler).Methods("GET")
+	r.HandleFunc("/articles/{id}", handler).Methods("GET", "PUT")
+	r.HandleFunc("/authors", handler).Queries("surname", "{surname}")
+	err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+		pathTemplate, err := route.GetPathTemplate()
+		if err == nil {
+			fmt.Println("ROUTE:", pathTemplate)
+		}
+		pathRegexp, err := route.GetPathRegexp()
+		if err == nil {
+			fmt.Println("Path regexp:", pathRegexp)
+		}
+		queriesTemplates, err := route.GetQueriesTemplates()
+		if err == nil {
+			fmt.Println("Queries templates:", strings.Join(queriesTemplates, ","))
+		}
+		queriesRegexps, err := route.GetQueriesRegexp()
+		if err == nil {
+			fmt.Println("Queries regexps:", strings.Join(queriesRegexps, ","))
+		}
+		methods, err := route.GetMethods()
+		if err == nil {
+			fmt.Println("Methods:", strings.Join(methods, ","))
+		}
+		fmt.Println()
+		return nil
+	})
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	http.Handle("/", r)
+}
+```
+
+Each introspection method returns an error when the route does not define the corresponding attribute — for example, `GetMethods` returns an error for routes with no method matcher. The example handles this by ignoring the error and skipping the print.
+
+## Route introspection methods
+
+These methods are available on any `*mux.Route` and return information about how the route was configured.
+
+| Method | Returns | Error condition |
+|---|---|---|
+| `GetPathTemplate()` | `(string, error)` | Route has no path |
+| `GetPathRegexp()` | `(string, error)` | Route has no path |
+| `GetQueriesTemplates()` | `([]string, error)` | Route has no query matchers |
+| `GetQueriesRegexp()` | `([]string, error)` | Route has no query matchers |
+| `GetMethods()` | `([]string, error)` | Route has no method matcher |
+| `GetHostTemplate()` | `(string, error)` | Route has no host matcher |
+
+## Route metadata
+
+You can attach arbitrary key/value metadata to a route and read it back during a walk. This is useful for tagging routes with documentation strings, permission labels, or feature flags.
+
+```go
+r.HandleFunc("/admin/users", AdminUsersHandler).
+    Methods("GET").
+    Metadata("role", "admin").
+    Metadata("description", "List all users")
+```
+
+Read the metadata in your `WalkFunc`:
+
+```go
+r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+    if route.MetadataContains("role") {
+        value, _ := route.GetMetadataValue("role")
+        fmt.Println("Required role:", value)
+    }
+    return nil
+})
+```
+
+The full metadata API on `*mux.Route`:
+
+| Method | Description |
+|---|---|
+| `Metadata(key, value any) *Route` | Set a metadata key/value pair. Chainable. |
+| `GetMetadata() map[any]any` | Return the full metadata map. |
+| `MetadataContains(key any) bool` | Report whether a key is present. |
+| `GetMetadataValue(key any) (any, error)` | Return the value for a key, or `ErrMetadataKeyNotFound`. |
+| `GetMetadataValueOr(key, fallback any) any` | Return the value for a key, or `fallback` if not found. |
+
+## Practical uses
+
+<CardGroup cols={2}>
+  <Card title="API documentation" icon="book">
+    Walk all routes at startup and generate a list of endpoints, their methods, and path patterns for developer documentation.
+  </Card>
+  <Card title="Instrumentation" icon="chart-line">
+    Register Prometheus or OpenTelemetry metrics keyed by path template so that metrics are grouped by route pattern rather than raw URL.
+  </Card>
+  <Card title="Debugging" icon="bug">
+    Print the full route table on startup to confirm that routes are registered in the expected order and with the expected patterns.
+  </Card>
+  <Card title="Authorization mapping" icon="lock">
+    Use `Metadata` to attach required roles or permissions to routes, then read them in an auth middleware or an access-control audit tool.
+  </Card>
+</CardGroup>
+
+<Tip>
+  Walk is called after all routes are registered, so the output reflects the final router state. Call it just before `http.ListenAndServe` to capture the complete route table.
+</Tip>

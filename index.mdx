@@ -1,97 +1,99 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "gorilla/mux"
+description: "A powerful HTTP router and URL matcher for building Go web servers with full net/http compatibility."
 ---
 
-## Setting up
+gorilla/mux is the most popular HTTP router for Go. It implements the `http.Handler` interface, making it a drop-in replacement for Go's standard `http.ServeMux` — with far more expressive route matching, named URL variables, subrouters, middleware, and reverse URL building.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build a working Go HTTP server with gorilla/mux in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Route matching" icon="route" href="/concepts/routing">
+    Learn how routes are matched by path, method, host, headers, and more.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Middleware" icon="layer-group" href="/concepts/middleware">
+    Add logging, authentication, and other cross-cutting concerns with middleware.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/router">
+    Complete reference for Router, Route, and all public functions.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Why gorilla/mux?
 
-Everything you need to create world-class documentation.
+The standard library's `http.ServeMux` only matches on URL paths. gorilla/mux adds:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+- **Named path variables** — capture `{id}` or `{id:[0-9]+}` from URLs
+- **Multi-condition matching** — combine path, host, HTTP method, scheme, headers, and query params
+- **Subrouters** — group routes that share common conditions for cleaner code and faster matching
+- **Reverse URL building** — generate URLs for named routes programmatically
+- **Middleware** — wrap handlers with reusable logic using the standard `func(http.Handler) http.Handler` signature
 
-## Need inspiration?
+## Get started
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install the package">
+    ```bash
+    go get -u github.com/gorilla/mux
+    ```
+  </Step>
+  <Step title="Create a router and register routes">
+    ```go main.go
+    package main
+
+    import (
+        "fmt"
+        "net/http"
+        "log"
+
+        "github.com/gorilla/mux"
+    )
+
+    func main() {
+        r := mux.NewRouter()
+        r.HandleFunc("/", HomeHandler)
+        r.HandleFunc("/products/{id}", ProductHandler).Methods("GET")
+        log.Fatal(http.ListenAndServe(":8080", r))
+    }
+
+    func HomeHandler(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintln(w, "Welcome!")
+    }
+
+    func ProductHandler(w http.ResponseWriter, r *http.Request) {
+        vars := mux.Vars(r)
+        fmt.Fprintf(w, "Product: %s\n", vars["id"])
+    }
+    ```
+  </Step>
+  <Step title="Run your server">
+    ```bash
+    go run main.go
+    ```
+    Your server is now running at `http://localhost:8080`.
+  </Step>
+</Steps>
+
+## Explore the docs
+
+<CardGroup cols={3}>
+  <Card title="URL variables" icon="brackets-curly" href="/concepts/variables">
+    Capture and validate path segments with named variables and regex patterns.
+  </Card>
+  <Card title="Subrouters" icon="sitemap" href="/concepts/subrouters">
+    Group routes that share a common host, path prefix, or other conditions.
+  </Card>
+  <Card title="URL building" icon="link" href="/guides/url-building">
+    Reverse-generate URLs for named routes to avoid hardcoded strings.
+  </Card>
+  <Card title="Static files" icon="file" href="/guides/static-files">
+    Serve static assets alongside your API routes.
+  </Card>
+  <Card title="CORS" icon="globe" href="/guides/cors">
+    Handle CORS preflight requests with CORSMethodMiddleware.
+  </Card>
+  <Card title="Testing" icon="flask" href="/guides/testing-handlers">
+    Write table-driven tests for handlers with route variables.
+  </Card>
+</CardGroup>

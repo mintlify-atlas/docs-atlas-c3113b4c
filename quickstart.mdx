@@ -1,80 +1,231 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Build a working Go HTTP server with gorilla/mux in under 5 minutes."
 ---
 
-## Get started in three steps
+<Info>
+  **Prerequisites**: Go 1.20 or higher. Run `go version` to check.
+</Info>
 
-Get your documentation site running locally and make your first customization.
+<Steps>
 
-### Step 1: Set up your local environment
+<Step title="Install gorilla/mux">
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+In your module directory, add `gorilla/mux` as a dependency:
 
-### Step 2: Deploy your changes
+```bash
+go get -u github.com/gorilla/mux
+```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+</Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Step title="Create main.go">
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Create a file called `main.go` with the following content. It registers three routes and starts an HTTP server with sensible timeouts:
 
-### Step 3: Go live
+```go
+package main
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+import (
+    "encoding/json"
+    "log"
+    "net/http"
+    "time"
 
-## Next steps
+    "github.com/gorilla/mux"
+)
 
-Now that you have your docs running, explore these key features:
+func main() {
+    r := mux.NewRouter()
+
+    r.HandleFunc("/", homeHandler).Methods("GET")
+    r.HandleFunc("/products/{id}", getProductHandler).Methods("GET")
+    r.HandleFunc("/products", createProductHandler).Methods("POST")
+
+    srv := &http.Server{
+        Handler:      r,
+        Addr:         ":8080",
+        WriteTimeout: 15 * time.Second,
+        ReadTimeout:  15 * time.Second,
+    }
+
+    log.Println("Listening on :8080")
+    log.Fatal(srv.ListenAndServe())
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+```
+
+</Step>
+
+<Step title="Add a route with a path variable">
+
+`gorilla/mux` lets you capture URL segments using `{name}` syntax. Use `mux.Vars(r)` inside the handler to read the captured values:
+
+```go
+func getProductHandler(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    id := vars["id"]
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"id": id})
+}
+```
+
+A request to `GET /products/42` sets `vars["id"]` to `"42"`.
+
+You can also restrict a variable to a specific pattern with `{id:[0-9]+}`, which only matches numeric IDs.
+
+</Step>
+
+<Step title="Add a POST handler">
+
+```go
+func createProductHandler(w http.ResponseWriter, r *http.Request) {
+    var body map[string]any
+    if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+        http.Error(w, "invalid JSON", http.StatusBadRequest)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusCreated)
+    json.NewEncoder(w).Encode(body)
+}
+```
+
+</Step>
+
+<Step title="Add middleware">
+
+Middleware in `gorilla/mux` uses the standard `func(http.Handler) http.Handler` signature. Attach it to a router with `r.Use()`:
+
+```go
+func loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Printf("%s %s", r.Method, r.RequestURI)
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+Register it before starting the server:
+
+```go
+r.Use(loggingMiddleware)
+```
+
+Middleware is executed in the order it is added and runs for every matched route.
+
+</Step>
+
+<Step title="Run the server">
+
+```bash
+go run main.go
+```
+
+The server starts on port 8080. Test your routes:
+
+```bash
+curl http://localhost:8080/
+curl http://localhost:8080/products/42
+curl -X POST http://localhost:8080/products -d '{"name":"widget"}' -H "Content-Type: application/json"
+```
+
+</Step>
+
+</Steps>
+
+## Complete example
+
+Here is the full `main.go` combining all of the steps above:
+
+```go
+package main
+
+import (
+    "encoding/json"
+    "log"
+    "net/http"
+    "time"
+
+    "github.com/gorilla/mux"
+)
+
+func loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Printf("%s %s", r.Method, r.RequestURI)
+        next.ServeHTTP(w, r)
+    })
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func getProductHandler(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    id := vars["id"]
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{"id": id})
+}
+
+func createProductHandler(w http.ResponseWriter, r *http.Request) {
+    var body map[string]any
+    if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+        http.Error(w, "invalid JSON", http.StatusBadRequest)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusCreated)
+    json.NewEncoder(w).Encode(body)
+}
+
+func main() {
+    r := mux.NewRouter()
+
+    r.Use(loggingMiddleware)
+
+    r.HandleFunc("/", homeHandler).Methods("GET")
+    r.HandleFunc("/products/{id}", getProductHandler).Methods("GET")
+    r.HandleFunc("/products", createProductHandler).Methods("POST")
+
+    srv := &http.Server{
+        Handler:      r,
+        Addr:         ":8080",
+        WriteTimeout: 15 * time.Second,
+        ReadTimeout:  15 * time.Second,
+    }
+
+    log.Println("Listening on :8080")
+    log.Fatal(srv.ListenAndServe())
+}
+```
+
+<Tip>
+  Setting `WriteTimeout` and `ReadTimeout` on `http.Server` is important for production servers — it prevents slow clients from holding connections open indefinitely.
+</Tip>
+
+## What's next
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Routing" icon="route" href="/concepts/routing">
+    Match requests by host, scheme, headers, query parameters, and custom functions.
+  </Card>
+  <Card title="Subrouters" icon="sitemap" href="/concepts/subrouters">
+    Group routes that share a common path prefix or host condition.
+  </Card>
+  <Card title="Middleware" icon="layer-group" href="/concepts/middleware">
+    Learn about route-level middleware and the built-in CORS middleware.
+  </Card>
+  <Card title="URL building" icon="link" href="/guides/url-building">
+    Generate URLs for named routes using `r.Get("name").URL(...)`.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
